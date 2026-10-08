@@ -243,6 +243,131 @@ textarea {
     margin-bottom: 20px;
 }
 
+.stats-wide {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.filters-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.badges-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 8px 0;
+}
+
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-positive {
+    background: #d4edda;
+    color: #155724;
+}
+
+.badge-negative {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.badge-neutral {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+.badge-lang {
+    background: #e8ecff;
+    color: #334;
+}
+
+.conf {
+    font-size: 12px;
+    color: #666;
+}
+
+.analysis-panel {
+    margin-top: 16px;
+    padding: 14px;
+    border-radius: 8px;
+    background: #f3f6ff;
+    border: 1px solid #dbe3ff;
+}
+
+.analysis-panel h4 {
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.loading {
+    color: #666;
+    font-style: italic;
+    margin-top: 12px;
+}
+
+.intensity-card {
+    margin-top: 10px;
+}
+
+.intensity-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.intensity-level {
+    font-weight: 700;
+    color: #4a6cf7;
+}
+
+.progress-track {
+    height: 10px;
+    background: #e9ecf5;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+.bar-positive {
+    background: linear-gradient(90deg, #27ae60, #2ecc71);
+}
+
+.bar-negative {
+    background: linear-gradient(90deg, #c0392b, #e74c3c);
+}
+
+.bar-neutral {
+    background: #95a5a6;
+}
+
+.intensity-note,
+.intensity-na {
+    font-size: 12px;
+    color: #777;
+    margin-top: 6px;
+}
+
+.saved-ok {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #155724;
+}
+
 .stat-box {
     background: linear-gradient(135deg, #4a6cf7, #6a4af7);
     color: white;

@@ -1,199 +1,262 @@
 /* ============================================================
-   AI FEEDBACK SYSTEM — Sprint 1
-   Features:
-   1. Feedback Submission Form
-   2. Save Feedback to Database (LocalStorage)
-   3. Select Feedback Topic
-   4. Admin Login Panel
+   AI FEEDBACK SYSTEM — Sprint 2
+   Backend API + NLP analysis (US5–US8)
    ============================================================ */
 
-// ================== DATABASE (LocalStorage) ==================
 const STORAGE_KEY = 'ai_feedback_data';
-const ADMIN_USER = 'admin';
-const ADMIN_PASS = '1234';
+const MIGRATION_FLAG = 'ai_feedback_migrated_v1';
 
 function getFeedbacks() {
     const data = localStorage.getItem(STORAGE_KEY);
     return data ? JSON.parse(data) : [];
 }
 
-function saveFeedbacks(list) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-}
-
-function addFeedback(feedback) {
-    const list = getFeedbacks();
-    list.unshift(feedback);
-    saveFeedbacks(list);
-}
-
-// ================== SECURITY ==================
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// ================== 1. FEEDBACK FORM ==================
+function sentimentBadge(sentiment) {
+    const s = (sentiment || 'unknown').toLowerCase();
+    const cls = s === 'positive' ? 'badge-positive' : s === 'negative' ? 'badge-negative' : 'badge-neutral';
+    const label = s.charAt(0).toUpperCase() + s.slice(1);
+    return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function languageBadge(code, name) {
+    return `<span class="badge badge-lang">${escapeHtml(name || code || 'Unknown')}</span>`;
+}
+
+function intensityBlock(item) {
+    if (item.emotion_intensity == null) {
+        return `<p class="intensity-na">Emotion intensity: Not applicable</p>`;
+    }
+    const pct = Math.min(100, Math.max(0, (item.emotion_intensity / 10) * 100));
+    const sentiment = (item.sentiment || 'neutral').toLowerCase();
+    const barClass =
+        sentiment === 'positive' ? 'bar-positive' : sentiment === 'negative' ? 'bar-negative' : 'bar-neutral';
+    return `
+        <div class="intensity-card">
+            <div class="intensity-head">
+                <strong>Emotion Intensity: ${item.emotion_intensity}/10</strong>
+                <span class="intensity-level">${escapeHtml(item.intensity_level || '')}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill ${barClass}" style="width:${pct}%"></div></div>
+            <p class="intensity-note">Level measures emotional strength (not model accuracy).</p>
+        </div>
+    `;
+}
+
+function renderFeedbackCard(fb, detailed = false) {
+    const dateStr = fb.created_at
+        ? new Date(fb.created_at).toLocaleString('en-GB')
+        : fb.date || '';
+    const conf =
+        fb.sentiment_confidence != null
+            ? `<span class="conf">Model score: ${(fb.sentiment_confidence * 100).toFixed(1)}% (calibrated label confidence, not guaranteed accuracy)</span>`
+            : '';
+    return `
+        <div class="feedback-item">
+            <div class="meta">
+                <span class="name">${escapeHtml(fb.student_name || fb.name || 'Anonymous')}</span>
+                <span>${escapeHtml(dateStr)}</span>
+            </div>
+            <div class="badges-row">
+                <span class="topic-tag">${escapeHtml(fb.topic)}</span>
+                ${languageBadge(fb.detected_language, fb.language_name)}
+                ${sentimentBadge(fb.sentiment)}
+                ${conf}
+            </div>
+            <p class="text">${escapeHtml(fb.feedback_text || fb.text || '')}</p>
+            ${detailed ? intensityBlock(fb) : ''}
+        </div>
+    `;
+}
+
+async function tryMigrateLocalStorage() {
+    const legacy = getFeedbacks();
+    if (!legacy.length || localStorage.getItem(MIGRATION_FLAG) === 'true') return;
+    try {
+        const session = await AdminAPI.session();
+        if (!session?.authenticated) return;
+        const result = await AdminAPI.migrate(legacy);
+        if (result.imported > 0) {
+            localStorage.setItem(MIGRATION_FLAG, 'true');
+            console.info('Migrated localStorage feedback:', result);
+        }
+    } catch {
+        /* migration runs after admin login */
+    }
+}
+
+async function renderRecentFeedbacks() {
+    const container = document.getElementById('recentFeedbacks');
+    if (!container) return;
+    try {
+        const list = await FeedbackAPI.recent(3);
+        if (!list.length) {
+            container.innerHTML = '<p class="empty">No feedback yet. Be the first to submit!</p>';
+            return;
+        }
+        container.innerHTML = list.map((fb) => renderFeedbackCard(fb, true)).join('');
+    } catch (err) {
+        container.innerHTML = `<p class="empty">Could not load recent feedback: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
 const feedbackForm = document.getElementById('feedbackForm');
-
 if (feedbackForm) {
-    feedbackForm.addEventListener('submit', function (e) {
+    feedbackForm.addEventListener('submit', async function (e) {
         e.preventDefault();
-
         const name = document.getElementById('studentName').value.trim();
         const topic = document.getElementById('topic').value;
         const text = document.getElementById('feedbackText').value.trim();
+        const successMsg = document.getElementById('successMsg');
+        const analysisBox = document.getElementById('analysisResult');
+        const submitBtn = feedbackForm.querySelector('button[type="submit"]');
 
         if (!name || !topic || !text) {
             alert('Please fill all fields!');
             return;
         }
 
-        const feedback = {
-            id: Date.now(),
-            name: name,
-            topic: topic,
-            text: text,
-            date: new Date().toLocaleString('en-GB')
-        };
+        submitBtn.disabled = true;
+        submitBtn.textContent = '⏳ Analyzing...';
+        successMsg.style.display = 'none';
+        if (analysisBox) analysisBox.innerHTML = '<p class="loading">Running language detection, sentiment, and intensity analysis...</p>';
 
-        addFeedback(feedback);
+        try {
+            const saved = await FeedbackAPI.submit({
+                student_name: name,
+                topic,
+                feedback_text: text,
+            });
 
-        const successMsg = document.getElementById('successMsg');
-        successMsg.textContent = '✅ Your feedback has been saved! Thank you!';
-        successMsg.style.display = 'block';
+            if (analysisBox) {
+                analysisBox.innerHTML = `
+                    <div class="analysis-panel">
+                        <h4>AI Analysis Result</h4>
+                        <p>Language: ${escapeHtml(saved.language_name)} (${escapeHtml(saved.detected_language)})</p>
+                        <p>Sentiment: ${sentimentBadge(saved.sentiment)} ${saved.sentiment_confidence != null ? `<span class="conf">(${(saved.sentiment_confidence * 100).toFixed(1)}% label score)</span>` : ''}</p>
+                        ${intensityBlock(saved)}
+                        <p class="saved-ok">✅ Saved to database (ID #${saved.id})</p>
+                    </div>
+                `;
+            }
 
-        feedbackForm.reset();
-        renderRecentFeedbacks();
-
-        setTimeout(() => {
-            successMsg.style.display = 'none';
-        }, 4000);
-    });
-}
-
-// ================== SHOW RECENT 3 FEEDBACKS ==================
-function renderRecentFeedbacks() {
-    const container = document.getElementById('recentFeedbacks');
-    if (!container) return;
-
-    const list = getFeedbacks().slice(0, 3);
-
-    if (list.length === 0) {
-        container.innerHTML = '<p class="empty">No feedback yet. Be the first to submit!</p>';
-        return;
-    }
-
-    container.innerHTML = list.map(fb => `
-        <div class="feedback-item">
-            <div class="meta">
-                <span class="name">${escapeHtml(fb.name)}</span>
-                <span>${fb.date}</span>
-            </div>
-            <span class="topic-tag">${escapeHtml(fb.topic)}</span>
-            <p class="text">${escapeHtml(fb.text)}</p>
-        </div>
-    `).join('');
-}
-
-// ================== 2. ADMIN PANEL ==================
-const loginForm = document.getElementById('loginForm');
-const logoutBtn = document.getElementById('logoutBtn');
-const filterTopic = document.getElementById('filterTopic');
-
-// Login
-if (loginForm) {
-    if (sessionStorage.getItem('adminLogged') === 'true') {
-        showAdminPanel();
-    }
-
-    loginForm.addEventListener('submit', function (e) {
-        e.preventDefault();
-
-        const user = document.getElementById('loginUser').value.trim();
-        const pass = document.getElementById('loginPass').value.trim();
-
-        if (user === ADMIN_USER && pass === ADMIN_PASS) {
-            sessionStorage.setItem('adminLogged', 'true');
-            showAdminPanel();
-        } else {
-            document.getElementById('loginError').textContent = '❌ Wrong username or password!';
+            successMsg.textContent = '✅ Your feedback was analyzed and saved. Thank you!';
+            successMsg.style.display = 'block';
+            feedbackForm.reset();
+            await renderRecentFeedbacks();
+        } catch (err) {
+            if (analysisBox) analysisBox.innerHTML = `<p class="error-msg">${escapeHtml(err.message)}</p>`;
+            successMsg.textContent = '';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '📤 Submit Feedback';
         }
     });
 }
 
-// Show panel
-function showAdminPanel() {
+const loginForm = document.getElementById('loginForm');
+const logoutBtn = document.getElementById('logoutBtn');
+const filterTopic = document.getElementById('filterTopic');
+const filterSentiment = document.getElementById('filterSentiment');
+const filterLanguage = document.getElementById('filterLanguage');
+
+async function showAdminPanel() {
     document.getElementById('loginSection').classList.add('hidden');
     document.getElementById('adminPanel').classList.remove('hidden');
-    renderAdminFeedbacks();
-    updateStats();
+    await tryMigrateLocalStorage();
+    await renderAdminFeedbacks();
+    await updateStats();
 }
 
-// Logout
-if (logoutBtn) {
-    logoutBtn.addEventListener('click', function () {
-        sessionStorage.removeItem('adminLogged');
-        window.location.href = 'admin.html';
+if (loginForm) {
+    (async () => {
+        try {
+            const session = await AdminAPI.session();
+            if (session?.authenticated) await showAdminPanel();
+        } catch {
+            /* not logged in */
+        }
+    })();
+
+    loginForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const user = document.getElementById('loginUser').value.trim();
+        const pass = document.getElementById('loginPass').value;
+        const errEl = document.getElementById('loginError');
+        errEl.textContent = '';
+        try {
+            await AdminAPI.login(user, pass);
+            await showAdminPanel();
+        } catch {
+            errEl.textContent = '❌ Wrong username or password!';
+        }
     });
 }
 
-// Filter
-if (filterTopic) {
-    filterTopic.addEventListener('change', renderAdminFeedbacks);
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', async function () {
+        try {
+            await AdminAPI.logout();
+        } finally {
+            window.location.href = 'admin.html';
+        }
+    });
 }
 
-// ================== SHOW ALL FEEDBACKS ==================
-function renderAdminFeedbacks() {
+function bindFilter(el, handler) {
+    if (el) el.addEventListener('change', handler);
+}
+
+bindFilter(filterTopic, renderAdminFeedbacks);
+bindFilter(filterSentiment, renderAdminFeedbacks);
+bindFilter(filterLanguage, renderAdminFeedbacks);
+
+async function renderAdminFeedbacks() {
     const container = document.getElementById('feedbackList');
     if (!container) return;
-
-    let list = getFeedbacks();
-    const filter = filterTopic ? filterTopic.value : '';
-
-    if (filter) {
-        list = list.filter(fb => fb.topic === filter);
+    try {
+        const list = await AdminAPI.feedback({
+            topic: filterTopic?.value || '',
+            sentiment: filterSentiment?.value || '',
+            language: filterLanguage?.value || '',
+        });
+        if (!list.length) {
+            container.innerHTML = '<div class="card"><p class="empty">No feedback found.</p></div>';
+            return;
+        }
+        container.innerHTML = list.map((fb) => `<div class="card">${renderFeedbackCard(fb, true)}</div>`).join('');
+    } catch (err) {
+        container.innerHTML = `<div class="card"><p class="empty">${escapeHtml(err.message)}</p></div>`;
     }
-
-    if (list.length === 0) {
-        container.innerHTML = '<div class="card"><p class="empty">No feedback found.</p></div>';
-        return;
-    }
-
-    container.innerHTML = list.map(fb => `
-        <div class="card">
-            <div class="meta" style="display:flex;justify-content:space-between;margin-bottom:10px;color:#888;font-size:13px;">
-                <span><b style="color:#2c3e50;">${escapeHtml(fb.name)}</b></span>
-                <span>${fb.date}</span>
-            </div>
-            <span class="topic-tag">${escapeHtml(fb.topic)}</span>
-            <p style="margin-top:10px;line-height:1.6;color:#444;">${escapeHtml(fb.text)}</p>
-        </div>
-    `).join('');
 }
 
-// ================== STATISTICS ==================
-function updateStats() {
-    const list = getFeedbacks();
-
+async function updateStats() {
     const totalEl = document.getElementById('totalCount');
-    const todayEl = document.getElementById('todayCount');
-    const topicEl = document.getElementById('topicCount');
-
     if (!totalEl) return;
-
-    totalEl.textContent = list.length;
-
-    const today = new Date().toLocaleDateString('en-GB');
-    const todayCount = list.filter(fb => fb.date.includes(today)).length;
-    todayEl.textContent = todayCount;
-
-    const uniqueTopics = new Set(list.map(fb => fb.topic));
-    topicEl.textContent = uniqueTopics.size;
+    try {
+        const stats = await AdminAPI.stats();
+        totalEl.textContent = stats.total;
+        document.getElementById('todayCount').textContent = stats.today;
+        document.getElementById('positiveCount').textContent = stats.positive;
+        document.getElementById('negativeCount').textContent = stats.negative;
+        document.getElementById('neutralCount').textContent = stats.neutral;
+        const avgEl = document.getElementById('avgIntensity');
+        if (avgEl) {
+            avgEl.textContent =
+                stats.average_emotion_intensity != null ? stats.average_emotion_intensity.toFixed(1) : '—';
+        }
+        const topicEl = document.getElementById('topicCount');
+        if (topicEl) topicEl.textContent = Object.keys(stats.by_topic || {}).length;
+    } catch (err) {
+        console.error(err);
+    }
 }
 
-// ================== PAGE LOAD ==================
 document.addEventListener('DOMContentLoaded', function () {
     renderRecentFeedbacks();
 });
